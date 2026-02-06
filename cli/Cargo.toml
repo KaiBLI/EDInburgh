@@ -14,6 +14,7 @@ clap = { version = "4.5.32", features = ["derive"] }
 clap-num = "1.2.0"
 derive_more = { version = "2.0.1", features = ["debug"] }
 faad2 = { git = "https://github.com/ohrstrom/faad2-rs.git", tag = "2.11.2" }
+minimpeg = "0.4"
 futures = "0.3.31"
 rodio = { version = "0.21.1", default-features = false, features = ["playback"] }
 cpal = { version = "0.16.0", default-features = false, optional = false }
