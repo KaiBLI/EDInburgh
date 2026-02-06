@@ -1,22 +1,20 @@
 <script setup lang="ts">
 import type { Ref, ComputedRef } from 'vue'
-import { ref, watch } from 'vue'
+import { ref, watch, type Ref, type ComputedRef } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useStorage } from '@vueuse/core'
 import { useBrowser } from './composables/browser'
 import settings from '@/settings'
 
-// TODO: how to import cross-package?
+// WASM Bridge
 import { EDI } from '../../wasm/pkg'
 
-// import FAAD2Decoder from '@/decoder/faad2'
-import FAAD2Decoder from '@ohrstrom/faad2-wasm/faad2_decoder.js'
+// Changed Decoder
+import { MPEGDecoder } from '@eshaz/wasm-audio-decoders/tree/main/src/mpg123-decoder/dist.mpg123-decoder.js'
 
 import type * as Types from '@/types'
-
 import { useEDIStore } from '@/stores/edi'
 import { usePlayerStore } from '@/stores/player'
-
 import Panel from '@/components/ui/Panel.vue'
 import Connection from '@/components/edi/connection/Connection.vue'
 import Ensemble from '@/components/edi/ensemble/Ensemble.vue'
@@ -37,9 +35,8 @@ const resample = async (
   targetRate: number,
 ): Promise<Float32Array> => {
   if (sourceRate === targetRate) {
-    return buffer // no resampling needed
+    return buffer 
   }
-
   const numFrames = buffer.length
 
   // Calculate target length
@@ -80,19 +77,16 @@ class EDInburgh {
   workletNode: AudioWorkletNode | null = null
   gainNode: GainNode | null = null
   gainFadeNode: GainNode | null = null
-  decoder: FAAD2Decoder | AudioDecoder | null = null
-  useFAAD2Decoder: boolean = true
+  
+  // DECODER VERIFY NAME !!!
+  decoder: MPEGDecoder | null = null
+  
   analyser: Analyser | null = null
   analyserReading = false
-
-  // faad decoder
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  faad: any = undefined
-
   decodeAudio: boolean = false
   volume: number = 0
 
-  // Store methods
+
   updateEnsemble: typeof useEDIStore.prototype.updateEnsemble
   updateDL: typeof useEDIStore.prototype.updateDL
   updateSLS: typeof useEDIStore.prototype.updateSLS
@@ -100,7 +94,7 @@ class EDInburgh {
   setAudioFormat: typeof useEDIStore.prototype.setAudioFormat
   setPlayerState: typeof usePlayerStore.prototype.setState
 
-  // Reactive store state
+  
   connected: Ref<boolean>
   selectedService: ComputedRef<Types.Service | undefined>
   playerVolume: ComputedRef<number>
@@ -118,6 +112,8 @@ class EDInburgh {
     connected,
     selectedService,
     playerVolume,
+
+
   }: {
     updateEnsemble: typeof useEDIStore.prototype.updateEnsemble
     updateDL: typeof useEDIStore.prototype.updateDL
@@ -129,10 +125,9 @@ class EDInburgh {
     connected: Ref<boolean>
     selectedService: ComputedRef<Types.Service | undefined>
     playerVolume: ComputedRef<number>
-  }) {
+  }) { 
     console.log('EDInburgh:init')
-
-    // pinia store mappings
+        // pinia store mappings
     this.updateEnsemble = updateEnsemble
     this.updateDL = updateDL
     this.updateSLS = updateSLS
@@ -149,11 +144,14 @@ class EDInburgh {
       r: 0,
     })
 
-    /******************************************************************
+     /******************************************************************
      EDI Events / Callbacks
      ******************************************************************/
 
-    const edi = new EDI()
+
+        const edi = new EDI()
+
+
 
     edi.addEventListener('ensemble_updated', async (e: CustomEvent) => {
       await this.updateEnsemble(e.detail as Types.Ensemble)
@@ -168,30 +166,24 @@ class EDInburgh {
       await this.updateDL(e.detail as Types.DL)
     })
 
-    edi.addEventListener('aac_segment', async (e: CustomEvent) => {
-      const aacSegment = e.detail as Types.AACSegment
-
-      this.setAudioFormat(aacSegment.scid, aacSegment.audio_format)
-
-      if (!this.decodeAudio) {
-        return
-      }
-
+    /**
+     * UPDATED: Listen for mp2_segment
+     * The WASM EDI bridge emits mp2_segment for legacy audio.
+     */
+    edi.addEventListener('mp2_segment', async (e: CustomEvent) => {
+      const segment = e.detail // Should contain .frames (Uint8Array chunks)
+      
+      if (!this.decodeAudio) return
       const selected = this.selectedService.value
-      if (!selected) {
-        return
-      }
+      if (!selected || segment.scid !== selected.scid) return
 
-      if (aacSegment.scid !== selected.scid) {
-        return
-      }
-
-      aacSegment.frames.forEach((frame) => {
-        this.processAACSegment(new Uint8Array(frame))
+      segment.frames.forEach((frame: Uint8Array) => {
+        this.processMP2Frame(frame)
       })
     })
 
     this.edi = edi
+
 
     // Watch for selected SID changes
     watch(
@@ -302,201 +294,83 @@ class EDInburgh {
   }
 
   async initializeAudioDecoder(): Promise<void> {
-    console.log('EDInburgh: initializeAudioDecoder')
+    if (this.decoder) return
 
-    if (this.decoder) {
-      console.info('EDInburgh: decoder already initialized')
-      return
-    }
 
-    const sampleRate = this.useFAAD2Decoder ? 48_000 : 24_000
-
-    const audioContext = new AudioContext({
-      latencyHint: 'balanced',
-      sampleRate,
-      // sampleRate: 48_000, // when using faad2 decoder
-      // sampleRate: 24_000, // when using browser nadive decoder
-    })
-
+    const audioContext = new AudioContext({ latencyHint: 'balanced', sampleRate: 48000 })
     await audioContext.audioWorklet.addModule('pcm-processor.js')
 
-    const workletNode = new AudioWorkletNode(audioContext, 'pcm-processor', {
-      outputChannelCount: [2],
-    })
-
-    // channel splitter
+    const workletNode = new AudioWorkletNode(audioContext, 'pcm-processor', { outputChannelCount: [2] })
+    
+    // Analyser and Gain setup
     const splitter = audioContext.createChannelSplitter(2)
-
-    // L/R analysers
     const analyserL = audioContext.createAnalyser()
     const analyserR = audioContext.createAnalyser()
-
-    analyserL.fftSize = 8192
-    analyserR.fftSize = 8192
-
-    // connect chain:
-    // worklet → splitter
-    // splitter → analyserL (channel 0), analyserR (channel 1)
     workletNode.connect(splitter)
-
     splitter.connect(analyserL, 0)
     splitter.connect(analyserR, 1)
 
-    // user-controlled volume control
     const gainNode = audioContext.createGain()
     gainNode.gain.value = this.volume
-
-    // Fade in/out control
     const gainFadeNode = audioContext.createGain()
     gainFadeNode.gain.setValueAtTime(0.0, audioContext.currentTime)
-
+    
     workletNode.connect(gainNode)
     gainNode.connect(gainFadeNode)
-
     gainFadeNode.connect(audioContext.destination)
 
-    let decoder: FAAD2Decoder | AudioDecoder | null = null
-
-    if (this.useFAAD2Decoder) {
-      decoder = new FAAD2Decoder({
-        output: (audioData) => {
-          this.playDecodedAudio(audioData)
-        },
-        error: (e) => console.error('Decoder error:', e),
-      })
-    } else {
-      decoder = new AudioDecoder({
-        output: (audioData) => {
-          this.playDecodedAudio(audioData)
-        },
-        error: (e) => console.error('Decoder error:', e),
-      })
-    }
+    // INITIALIZE MPG123
+    this.decoder = new MPEGDecoder()
+    await this.decoder.ready
 
     this.audioContext = audioContext
     this.workletNode = workletNode
     this.gainNode = gainNode
     this.gainFadeNode = gainFadeNode
-    this.decoder = decoder
-    this.analyser = {
-      l: analyserL,
-      r: analyserR,
-    }
+    this.analyser = { l: analyserL, r: analyserR }
   }
-  async resetAudioDecoder(audioFormat: Types.AudioFormat): Promise<void> {
-    console.log('EDInburgh: resetAudioDecoder', audioFormat)
 
-    if (!this.decoder) {
-      console.info('EDInburgh: decoder not initialized')
-      return
-    }
-
-    if (!this.workletNode) {
-      console.info('EDInburgh: worklet node not initialized')
-      return
-    }
-
+  async resetAudioDecoder(): Promise<void> {
+    if (!this.decoder || !this.workletNode) return
     this.setPlayerState('stopped')
+    
+    // mpg123-decoder reset
+    await this.decoder.reset()
 
-    this.decoder.reset()
-
-    const codec = 'mp4a.40.5'
-    const asc = new Uint8Array(audioFormat?.asc ?? [])
-
-    await this.decoder.configure({
-      codec,
-      sampleRate: 48_000,
-      numberOfChannels: 2,
-      description: asc.buffer,
-    })
-
-    /* oxlint-disable unicorn/require-post-message-target-origin */
-    this.workletNode.port.postMessage({
-      type: 'reset',
-    })
-    /* oxlint-enable unicorn/require-post-message-target-origin */
-
-    // NOTE: is this a good idea?
-    await new Promise<void>((resolve) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const timeout = setTimeout(() => {
-        resolve()
-      }, 10)
-    })
+    this.workletNode.port.postMessage({ type: 'reset' })
   }
 
-  async processAACSegment(aacSegment: Types.AACSegment): Promise<void> {
-    if (!this.decoder) {
-      console.info('decoder not initialized')
-      return
-    }
+  /**
+   * NEW: Process MP2 frames using mpg123-decoder
+   */
+  async processMP2Frame(frame: Uint8Array): Promise<void> {
+    if (!this.decoder || !this.decodeAudio) return
 
-    if (!this.audioContext) {
-      console.info('context not initialized')
-      return
-    }
+    // mpg123-decoder returns decoded PCM directly
+    const { channelData, samplesDecoded, sampleRate } = this.decoder.decode(frame)
 
-    if (!this.decodeAudio) {
-      console.info('decodeAudio disabled')
-      return
-    }
-
-    const chunk = new EncodedAudioChunk({
-      type: 'key',
-      timestamp: this.audioContext.currentTime * 1e6,
-      data: aacSegment.buffer,
-    })
-
-    try {
-      this.decoder.decode(chunk)
-    } catch (err) {
-      console.warn('Decoder error:', err)
-      // await this.resetAudioDecoder()
+    if (samplesDecoded > 0) {
+      this.playDecodedMP2(channelData, sampleRate)
     }
   }
 
-  async playDecodedAudio(audioData): Promise<void> {
-    if (!this.workletNode) {
-      console.info('worklet not initialized')
-      return
-    }
+  async playDecodedMP2(pcmData: Float32Array[], sampleRate: number): Promise<void> {
+    if (!this.workletNode || !this.audioContext) return
 
-    // console.debug('EDInburgh: AD', audioData)
+    let outL = pcmData[0]
+    let outR = pcmData[1] || pcmData[0] // Fallback to mono if needed
 
-    const numChannels = audioData.numberOfChannels
-    const numFrames = audioData.numberOfFrames
-
-    const pcmData = [new Float32Array(numFrames), new Float32Array(numFrames)]
-
-    for (let channel = 0; channel < numChannels; channel++) {
-      audioData.copyTo(pcmData[channel], { planeIndex: channel })
-      if (numChannels === 1) {
-        // If mono, duplicate the channel to both L and R
-        pcmData[1] = pcmData[0]
-      }
-    }
-
-    const sampleRate = audioData.sampleRate
-    // const sampleRate = 32_000
-
+    // Resample if DAB stream rate doesn't match browser context
     if (sampleRate !== this.audioContext.sampleRate) {
-      // console.warn('EDInburgh: sample rate mismatch', audioData.sampleRate, this.audioContext.sampleRate)
-
-      pcmData[0] = await resample(pcmData[0], sampleRate, this.audioContext.sampleRate)
-
-      pcmData[1] = await resample(pcmData[1], sampleRate, this.audioContext.sampleRate)
+      outL = await resample(outL, sampleRate, this.audioContext.sampleRate)
+      outR = await resample(outR, sampleRate, this.audioContext.sampleRate)
     }
-
-    // console.debug("pcmData", pcmData)
 
     this.setPlayerState('playing')
-
-    /* oxlint-disable unicorn/require-post-message-target-origin */
     this.workletNode.port.postMessage({
       type: 'audio',
-      samples: pcmData,
+      samples: [outL, outR],
     })
-    /* oxlint-enable unicorn/require-post-message-target-origin */
   }
 
   async fadeTo(value: number = 1.0, time: number = 1.0): Promise<void> {
@@ -578,7 +452,7 @@ class EDInburgh {
     l.getFloatTimeDomainData(bufferL)
     r.getFloatTimeDomainData(bufferR)
 
-    const rmsLength = 2048 // You can adjust this value
+    const rmsLength = 2048 
 
     const sliceL = bufferL.slice(bufferL.length - rmsLength)
     const sliceR = bufferR.slice(bufferR.length - rmsLength)
