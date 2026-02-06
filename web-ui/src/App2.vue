@@ -9,7 +9,7 @@ import settings from '@/settings'
 // WASM Bridge
 import { EDI } from '../../wasm/pkg'
 
-// NEW DECODER: mpg123-decoder
+// Changed Decoder
 import { MPEGDecoder } from '@eshaz/wasm-audio-decoders/tree/main/src/mpg123-decoder/dist.mpg123-decoder.js'
 
 import type * as Types from '@/types'
@@ -29,14 +29,13 @@ import Footer from '@/components/footer/Footer.vue'
 
 const { browser } = useBrowser()
 
-// Resample function remains the same as your original code
 const resample = async (
   buffer: Float32Array,
   sourceRate: number,
   targetRate: number,
 ): Promise<Float32Array> => {
   if (sourceRate === targetRate) {
-    return buffer // no resampling needed
+    return buffer 
   }
   const numFrames = buffer.length
 
@@ -87,7 +86,7 @@ class EDInburgh {
   decodeAudio: boolean = false
   volume: number = 0
 
-  // Store methods & state (keep your original constructor mappings)
+
   updateEnsemble: typeof useEDIStore.prototype.updateEnsemble
   updateDL: typeof useEDIStore.prototype.updateDL
   updateSLS: typeof useEDIStore.prototype.updateSLS
@@ -95,7 +94,7 @@ class EDInburgh {
   setAudioFormat: typeof useEDIStore.prototype.setAudioFormat
   setPlayerState: typeof usePlayerStore.prototype.setState
 
-  // Reactive store state
+  
   connected: Ref<boolean>
   selectedService: ComputedRef<Types.Service | undefined>
   playerVolume: ComputedRef<number>
@@ -139,7 +138,7 @@ class EDInburgh {
     this.connected = connected
     this.selectedService = selectedService
     this.playerVolume = playerVolume
-    // ... (Keep original Pinia mappings from your code) ...
+
     this.level = ref<Types.Level>({
       l: 0,
       r: 0,
@@ -152,7 +151,7 @@ class EDInburgh {
 
         const edi = new EDI()
 
-    // Keep metadata listeners
+
 
     edi.addEventListener('ensemble_updated', async (e: CustomEvent) => {
       await this.updateEnsemble(e.detail as Types.Ensemble)
@@ -168,7 +167,7 @@ class EDInburgh {
     })
 
     /**
-     * UPDATED: Listen for mp2_segment (DAB Classic)
+     * UPDATED: Listen for mp2_segment
      * The WASM EDI bridge emits mp2_segment for legacy audio.
      */
     edi.addEventListener('mp2_segment', async (e: CustomEvent) => {
@@ -297,13 +296,13 @@ class EDInburgh {
   async initializeAudioDecoder(): Promise<void> {
     if (this.decoder) return
 
-    // DAB Classic MP2 is typically 48kHz, but we'll let mpg123 handle the output
+
     const audioContext = new AudioContext({ latencyHint: 'balanced', sampleRate: 48000 })
     await audioContext.audioWorklet.addModule('pcm-processor.js')
 
     const workletNode = new AudioWorkletNode(audioContext, 'pcm-processor', { outputChannelCount: [2] })
     
-    // Analyser and Gain setup (Same as your original code)
+    // Analyser and Gain setup
     const splitter = audioContext.createChannelSplitter(2)
     const analyserL = audioContext.createAnalyser()
     const analyserR = audioContext.createAnalyser()
@@ -453,7 +452,7 @@ class EDInburgh {
     l.getFloatTimeDomainData(bufferL)
     r.getFloatTimeDomainData(bufferR)
 
-    const rmsLength = 2048 // You can adjust this value
+    const rmsLength = 2048 
 
     const sliceL = bufferL.slice(bufferL.length - rmsLength)
     const sliceR = bufferR.slice(bufferR.length - rmsLength)
