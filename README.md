@@ -1,3 +1,8 @@
+# EDInburgh MPEG-2 Support Branch
+This is a branch intended to swap AAC Support for MPEG-2 support for those strange folks who refuse to let the original DAB standard die :D I'm no coder so expect this to be a broken untested mess. My ultimate aim is to swap the FAAD2 encoder for mp123 which will allow decoding DAB frames using the original MPEG-2 codec without AAC. The original developers of EDInburgh have communicated that this feature was not an imminent priority, however this was functionality I strongly needed for my own use-case of EDInburgh. I personally have no DAB+ radios here in the old US of A, but I DO have 4 DAB radios that only support the original MP2 standard. 
+
+Help in this pursuit is most welcome, please feel free to reach out to hoosk@retrohoosk.tv or feel free to fork if you want to work on this! :) 
+
 # EDInburgh
 
 EDInburgh - your not so capital DAB experience ;) !
